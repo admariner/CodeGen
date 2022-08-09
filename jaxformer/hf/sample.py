@@ -161,10 +161,7 @@ def truncate(completion):
     start_pos = 0
 
     terminals_pos = [pos for pos in [find_re(completion, terminal, start_pos) for terminal in terminals] if pos != -1]
-    if len(terminals_pos) > 0:
-        return completion[:min(terminals_pos)]
-    else:
-        return completion
+    return completion[:min(terminals_pos)] if terminals_pos else completion
 
 
 def test_truncate():
@@ -208,7 +205,7 @@ def main():
     set_env()
     set_seed(args.rng_seed, deterministic=args.rng_deterministic)
     device = torch.device(args.device)
-    
+
     use_fp16 = True
     if (args.no_fp16 or device.type == "cpu"):
         use_fp16 = False

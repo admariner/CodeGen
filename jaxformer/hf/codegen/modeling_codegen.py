@@ -204,11 +204,7 @@ class CodeGenAttention(nn.Module):
             key = torch.cat((past_key, key), dim=-2)
             value = torch.cat((past_value, value), dim=-2)
 
-        if use_cache is True:
-            present = (key, value)
-        else:
-            present = None
-
+        present = (key, value) if use_cache is True else None
         # compute self-attention: V x Softmax(QK^T)
         attn_output, attn_weights = self._attn(query, key, value, attention_mask, head_mask)
 
@@ -339,13 +335,18 @@ class CodeGenModel(CodeGenPreTrainedModel):
         )
         assert_device_map(self.device_map, len(self.h))
         self.model_parallel = True
-        self.first_device = "cpu" if "cpu" in self.device_map.keys() else "cuda:" + str(min(self.device_map.keys()))
-        self.last_device = "cuda:" + str(max(self.device_map.keys()))
+        self.first_device = (
+            "cpu"
+            if "cpu" in self.device_map.keys()
+            else f"cuda:{str(min(self.device_map.keys()))}"
+        )
+
+        self.last_device = f"cuda:{str(max(self.device_map.keys()))}"
         self.wte = self.wte.to(self.first_device)
         # Load onto devices
         for k, v in self.device_map.items():
             for block in v:
-                cuda_device = "cuda:" + str(k)
+                cuda_device = f"cuda:{str(k)}"
                 self.h[block] = self.h[block].to(cuda_device)
         # ln_f to last
         self.ln_f = self.ln_f.to(self.last_device)
@@ -519,8 +520,8 @@ class CodeGenModel(CodeGenPreTrainedModel):
             # Model Parallel: If it's the last layer for that device, put things on the next device
             if self.model_parallel:
                 for k, v in self.device_map.items():
-                    if i == v[-1] and "cuda:" + str(k) != self.last_device:
-                        hidden_states = hidden_states.to("cuda:" + str(k + 1))
+                    if i == v[-1] and f"cuda:{str(k)}" != self.last_device:
+                        hidden_states = hidden_states.to(f"cuda:{str(k + 1)}")
 
         hidden_states = self.ln_f(hidden_states)
 
@@ -529,14 +530,24 @@ class CodeGenModel(CodeGenPreTrainedModel):
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
 
-        if not return_dict:
-            return tuple(v for v in [hidden_states, presents, all_hidden_states, all_self_attentions] if v is not None)
-
-        return BaseModelOutputWithPast(
-            last_hidden_state=hidden_states,
-            past_key_values=presents,
-            hidden_states=all_hidden_states,
-            attentions=all_self_attentions,
+        return (
+            BaseModelOutputWithPast(
+                last_hidden_state=hidden_states,
+                past_key_values=presents,
+                hidden_states=all_hidden_states,
+                attentions=all_self_attentions,
+            )
+            if return_dict
+            else tuple(
+                v
+                for v in [
+                    hidden_states,
+                    presents,
+                    all_hidden_states,
+                    all_self_attentions,
+                ]
+                if v is not None
+            )
         )
 
 
@@ -578,15 +589,15 @@ class CodeGenForCausalLM(CodeGenPreTrainedModel):
         return
 
     def prepare_inputs_for_generation(self, input_ids, past=None, **kwargs):
-        token_type_ids = kwargs.get("token_type_ids", None)
+        token_type_ids = kwargs.get("token_type_ids")
         # only last token for inputs_ids if past is defined in kwargs
         if past:
             input_ids = input_ids[:, -1].unsqueeze(-1)
             if token_type_ids is not None:
                 token_type_ids = token_type_ids[:, -1].unsqueeze(-1)
 
-        attention_mask = kwargs.get("attention_mask", None)
-        position_ids = kwargs.get("position_ids", None)
+        attention_mask = kwargs.get("attention_mask")
+        position_ids = kwargs.get("position_ids")
 
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
